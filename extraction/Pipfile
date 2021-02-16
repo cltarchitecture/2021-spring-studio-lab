@@ -1,0 +1,16 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+
+[packages]
+svgelements = "*"
+
+[requires]
+python_version = "3.8"
+
+[scripts]
+fixture_types = "python3 fixture_types.py"
+room_types = "python3 room_types.py"
