@@ -30,22 +30,27 @@ def get_headers():
         "proportion_exterior_walls",
         "num_adjacent_railings",
         "proportion_exterior_railings",
-        "num_railings_to_outside",
         "num_adjacent_rooms",
         "num_connected_rooms",
         "num_doors",
         "num_windows",
         "num_fixtures",
+        "open_to",
+        "door_to",
+        "contains",
     ]
 
     for t in ROOM_TYPES:
         headers.append("open_to_" + t)
-        headers.append("doors_to_" + t)
+        headers.append("door_to_" + t)
 
     for t in FIXTURE_TYPES:
         headers.append("contains_" + t)
 
     return headers
+
+def summarize_counter(c):
+    return ", ".join([label if count == 1 else "{} ({}x)".format(label, count) for label, count in c.items()])
 
 def process(model):
     try:
@@ -86,34 +91,37 @@ def process(model):
                         num_exterior_railings += 1
                 proportion_exterior_railings = num_exterior_railings / num_railings if num_railings > 0 else 0
 
+                data = {
+                    "path": model.path,
+                    "type": room.simple_type,
+                    "classes": room.full_type,
+                    "floor_index": floor_index,
+                    "num_sides": room.num_edges(),
+                    "area": room_area,
+                    "proportion_floor_area": proportion_floor_area,
+                    "perimeter": room.polygon.perimeter(),
+                    "compactness": room.polygon.isoperimetric_quotient(),
+                    "num_adjacent_walls": num_walls,
+                    "proportion_exterior_walls": proportion_exterior_walls,
+                    "num_adjacent_railings": num_railings,
+                    "proportion_exterior_railings": proportion_exterior_railings,
+                    "num_adjacent_rooms": sum(adjacent_rooms.values()),
+                    "num_connected_rooms": sum(connected_rooms.values()),
+                    "num_doors": len(room.doors),
+                    "num_windows": len(room.windows),
+                    "num_fixtures": len(room.fixtures),
+                }
 
-                data = [
-                    model.path,
-                    room.simple_type,
-                    room.full_type,
-                    floor_index,
-                    room.num_edges(),
-                    room_area,
-                    proportion_floor_area,
-                    room.polygon.perimeter(),
-                    room.polygon.isoperimetric_quotient(),
-                    num_walls,
-                    proportion_exterior_walls,
-                    num_railings,
-                    proportion_exterior_railings,
-                    sum(adjacent_rooms.values()),
-                    sum(connected_rooms.values()),
-                    len(room.doors),
-                    len(room.windows),
-                    len(room.fixtures),
-                ]
+                data["open_to"] = summarize_counter(adjacent_rooms)
+                data["door_to"] = summarize_counter(connected_rooms)
+                data["contains"] = summarize_counter(fixture_types)
 
                 for t in ROOM_TYPES:
-                    data.append(adjacent_rooms[t])
-                    data.append(connected_rooms[t])
+                    data["open_to_"+t] = adjacent_rooms[t]
+                    data["door_to_"+t] = connected_rooms[t]
 
                 for t in FIXTURE_TYPES:
-                    data.append(fixture_types[t])
+                    data["contains_"+t] = fixture_types[t]
 
                 yield data
 
@@ -132,8 +140,8 @@ args = parser.parse_args()
 
 start_time = perf_counter()
 c = Cubicasa(args.basepath)
-w = csv.writer(sys.stdout)
-w.writerow(get_headers())
+w = csv.DictWriter(sys.stdout, fieldnames=get_headers())
+w.writeheader()
 
 if args.plan is not None:
     m = c.get_model(args.plan)
