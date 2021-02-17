@@ -1,4 +1,4 @@
-from collections import namedtuple, UserList
+from collections import namedtuple
 from functools import cached_property
 from io import StringIO
 import math
@@ -475,10 +475,10 @@ def find_children_by_class(parent, class_name):
         return []
 
 
-class PlanObjectList(UserList):
+class PlanObjectList(list):
 
-    def __init__(self, object_class):
-        super().__init__(self)
+    def __init__(self, object_class, *args, **kwargs):
+        super().__init__(self, *args, **kwargs)
         self.object_class = object_class
 
     def add(self, object):
