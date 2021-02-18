@@ -104,20 +104,22 @@ def get_classes(element):
 
 
 def lines_are_close(line1, line2, tolerance):
-    first_pair_found = False
-    pairs = [
-        (line1, line2.boundary[0]),
-        (line1, line2.boundary[1]),
-        (line2, line1.boundary[0]),
-        (line2, line1.boundary[1])
-    ]
+    if line1.length > 0 and line2.length > 0:
 
-    for edge, point in pairs:
-        if edge.distance(point) < tolerance:
-            if first_pair_found:
-                return True
-            else:
-                first_pair_found = True
+        first_pair_found = False
+        pairs = [
+            (line1, line2.boundary[0]),
+            (line1, line2.boundary[1]),
+            (line2, line1.boundary[0]),
+            (line2, line1.boundary[1])
+        ]
+
+        for edge, point in pairs:
+            if edge.distance(point) < tolerance:
+                if first_pair_found:
+                    return True
+                else:
+                    first_pair_found = True
 
     return False
 
