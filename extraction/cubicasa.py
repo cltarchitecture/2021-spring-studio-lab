@@ -1,6 +1,7 @@
 from collections import namedtuple
 from functools import cached_property
 from io import StringIO
+from itertools import combinations
 import math
 import os.path
 import re
@@ -292,6 +293,7 @@ class Wall(Divider):
     def __init__(self, container, index):
         super().__init__(container, index)
         self.openings = []
+        self._polygon = None
 
         for child in container:
             if isinstance(child, svgelements.Group):
@@ -300,6 +302,12 @@ class Wall(Divider):
                     self.openings.append(Door(self, child, len(self.openings)))
                 elif object_type == "Window":
                     self.openings.append(Window(self, child, len(self.openings)))
+
+    @property
+    def polygon(self):
+        if self._polygon == None:
+            self._polygon = super().polygon
+        return self._polygon
 
     @property
     def is_exterior(self):
@@ -311,6 +319,45 @@ class Wall(Divider):
         if isinstance(object, Room):
             for opening in self.openings:
                 opening.check_adjacencies(object)
+
+    def remove_overlaps(self, other_wall, clean_overlaps_only=True):
+        if self.polygon.relate_pattern(other_wall.polygon, "2121T1212"):
+
+            self_difference = subtract_cleanly(self.polygon, other_wall.polygon, CLOSE_EDGE_TOLERANCE)
+            if self_difference is not None:
+                self._polygon = self_difference
+                return True
+
+            other_difference = subtract_cleanly(other_wall.polygon, self.polygon, CLOSE_EDGE_TOLERANCE)
+            if other_difference is not None:
+                other_wall._polygon = other_difference
+                return True
+
+            if clean_overlaps_only:
+                return False
+
+            other_wall._polygon = other_difference
+            return True
+
+
+def subtract_cleanly(this_polygon, that_polygon, tolerance):
+    difference = this_polygon.difference(that_polygon)
+    if isinstance(difference, Polygon):
+        return difference
+
+    if len(difference) == 2:
+        sizes = [minimum_rotated_rectangle_dimension(p) for p in difference]
+        min_size = min(sizes)
+        if min_size < tolerance:
+            i = sizes.index(min_size)
+            return difference[1-i]
+
+def minimum_rotated_rectangle_dimension(polygon):
+    rect = polygon.minimum_rotated_rectangle
+    points = [Point(c) for c in rect.exterior.coords[:3]]
+    d1 = points[0].distance(points[1])
+    d2 = points[1].distance(points[2])
+    return min(d1, d2)
 
 
 
@@ -517,8 +564,36 @@ class Floor:
 
         return area
 
+    def remove_wall_overlaps(self):
+        """Adjusts walls in the model so none of them overlap."""
+        pairs = list(combinations(self.walls, 2))
+        pairs_to_retry = []
+
+        while True:
+
+            # Any pairs that can't be differenced cleanly go into pairs_to_retry
+            for this_wall, that_wall in pairs:
+                if this_wall.remove_overlaps(that_wall) == False:
+                    pairs_to_retry.append((this_wall, that_wall))
+
+            # If there are no pairs to retry, we're done
+            if len(pairs_to_retry) == 0:
+                return
+
+            # If we have just as many pairs to retry as we started with, exit the loop
+            if len(pairs_to_retry) == len(pairs):
+                break
+
+            # Go again
+            pairs = pairs_to_retry
+            pairs_to_retry = []
+
+        # Any overlaps that are left at this point can't be differenced cleanly
+        for this_wall, that_wall in pairs_to_retry:
+            this_wall.remove_overlaps(that_wall, clean_overlaps_only=False)
 
     def find_adjacencies(self):
+        self.remove_wall_overlaps()
         for room_index, room in enumerate(self.rooms):
             room.find_adjacencies(self.walls)
             room.find_adjacencies(self.railings)
