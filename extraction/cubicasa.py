@@ -5,7 +5,7 @@ import math
 import os.path
 import re
 
-from geometry import LineSegment, Polygon, Point
+from shapely.geometry import LineString, MultiLineString, Point, Polygon
 import svgelements
 
 
@@ -103,6 +103,24 @@ def get_classes(element):
         return []
 
 
+def lines_are_close(line1, line2, tolerance):
+    first_pair_found = False
+    pairs = [
+        (line1, line2.boundary[0]),
+        (line1, line2.boundary[1]),
+        (line2, line1.boundary[0]),
+        (line2, line1.boundary[1])
+    ]
+
+    for edge, point in pairs:
+        if edge.distance(point) < tolerance:
+            if first_pair_found:
+                return True
+            else:
+                first_pair_found = True
+
+    return False
+
 
 
 
@@ -136,10 +154,10 @@ class PlanObject:
             svg_points = [Point(e.cx, e.cy)]
 
         elif isinstance(self.polygon_element, svgelements.Path):
-            svg_points = list(self.polygon_element.as_points())
+            svg_points = [Point(p.x, p.y) for p in e.as_points()]
 
         else:
-            svg_points = self.polygon_element.points
+            svg_points = [Point(p.x, p.y) for p in e.points]
 
         # Make sure we don't have any duplicate points
         unique_points = []
@@ -152,63 +170,37 @@ class PlanObject:
         return Polygon(unique_points)
 
     def num_edges(self):
-        return len(self.polygon.edges)
+        return len(self.polygon.exterior.coords) - 1
 
-    @cached_property
     def edges(self):
-        return self.polygon.edges
+        a = self.polygon.exterior.coords[:-1]
+        b = self.polygon.exterior.coords[1:]
+        return [LineString(points) for points in zip(a, b)]
 
-    @property
-    def eligible_edges(self):
-        """Returns a list of edges that are eligible for adjacency checks."""
-        return self.edges
-
-    @property
-    def eligible_edges_with_indexes(self):
-        """Returns a list of edges that are eligible for adjacency checks along with their indexes in the main edges list."""
-        return enumerate(self.edges)
-
-    @property
-    def edges_without_adjacencies(self):
-        """Returns a list of eligible edges that have no known adjacencies."""
-        edges = dict(self.eligible_edges_with_indexes)
-        for adj in self.adjacencies.values():
-            for edge_info in adj:
-                if edge_info.self_edge_index in edges:
-                    edges[edge_info.self_edge_index] = None
-        return list(filter(lambda x: x is not None, edges.values()))
-
-
-
-    def add_adjacency(self, object, self_edge_index, object_edge_index, intersection):
-        self.adjacencies.add(object, AdjacencyInfo(self_edge_index, object_edge_index, intersection))
+    def add_adjacency(self, object, intersection):
+        self.adjacencies.add(object, intersection)
 
     def find_adjacencies(self, other_objects):
-        for self_edge_index, self_edge in self.eligible_edges_with_indexes:
-            for object in other_objects:
-                for object_edge_index, object_edge in object.eligible_edges_with_indexes:
-                    intersection = self_edge.intersect(object_edge)
+        for other in other_objects:
+            intersection = self.polygon.intersection(other.polygon)
+            if isinstance(intersection, LineString) or isinstance(intersection, MultiLineString):
+                self.add_adjacency(other, intersection)
+                other.add_adjacency(self, intersection)
+            elif self._is_close(other):
+                self.add_adjacency(other, None)
+                other.add_adjacency(self, None)
 
-                    if isinstance(intersection, LineSegment):
-                        self.add_adjacency(object, self_edge_index, object_edge_index, intersection)
-                        object.add_adjacency(self, object_edge_index, self_edge_index, intersection)
+    def _is_close(self, other):
+        """Returns true if there is at least one pair of close edges between the two objects."""
+        d = self.polygon.distance(other.polygon)
+        if d <= CLOSE_EDGE_TOLERANCE:
+            for self_edge in self.edges():
+                for other_edge in other.edges():
+                    if lines_are_close(self_edge, other_edge, CLOSE_EDGE_TOLERANCE):
+                        return True
 
+        return False
 
-    def find_close(self, other_objects, tolerance):
-        loose_edges = self.edges_without_adjacencies
-        for self_edge in loose_edges:
-            self_edge_index = self.edges.index(self_edge)
-            for object in other_objects:
-                for object_edge_index, object_edge in object.eligible_edges_with_indexes:
-
-                    if self_edge.is_close(object_edge, tolerance):
-
-                        # closest_to_start = object_edge.closest_to_point(self_edge.start)
-                        # closest_to_end = object_edge.closest_to_point(self_edge.end)
-                        # intersection = LineSegment(closest_to_start, closest_to_end)
-
-                        self.add_adjacency(object, self_edge_index, object_edge_index, None)
-                        object.add_adjacency(self, object_edge_index, self_edge_index, None)
 
     def adjacencies_by_type(self, cls):
         return list(filter(lambda obj: isinstance(obj, cls), self.adjacencies.keys()))
@@ -216,7 +208,6 @@ class PlanObject:
 
 
 
-AdjacencyInfo = namedtuple('AdjacencyInfo', ["self_edge_index", "object_edge_index", "intersection"])
 
 class AdjacencyList(dict):
 
@@ -233,8 +224,6 @@ class AdjacencyList(dict):
                     matches.add(object, info_item)
         return matches
 
-    def by_edge(self, edge_index):
-        return self.filter(lambda object, info: info.self_edge_index == edge_index)
 
 
 
@@ -279,7 +268,12 @@ class Room(PlanObject):
         return self.adjacencies_by_type(Room)
 
     def connected_rooms(self):
-        return list(map(lambda d: d.rooms[1] if d.rooms[0] == self else d.rooms[0], self.doors))
+        """Returns a list of rooms connected to this one via a door."""
+        rooms = []
+        for door in self.doors:
+            if len(door.rooms) == 2:
+                rooms.append(door.rooms[1] if door.rooms[0] == self else door.rooms[0])
+        return rooms
 
 
 
@@ -307,11 +301,9 @@ class Divider(PlanObject):
 
     def rooms_opposite(self, room):
         """Returns a list of rooms adjacent to the opposite side of the wall/railing from the given room."""
-        if room in self.adjacencies:
-            room_side = self.adjacencies[room][0].self_edge_index
-            other_side = 0 if room_side == 2 else 2
-            return self.adjacencies.filter(lambda obj, info: isinstance(obj, Room) and info.self_edge_index == other_side)
 
+        # This method does nothing right now.  It needs to be reimplemented to work with shapely.
+        return []
 
 
 
@@ -338,12 +330,12 @@ class Wall(Divider):
     def is_exterior(self):
         return "External" in get_classes(self.container)
 
-    def add_adjacency(self, object, self_edge_index, object_edge_index, intersection):
-        super().add_adjacency(object, self_edge_index, object_edge_index, intersection)
+    def add_adjacency(self, object, intersection):
+        super().add_adjacency(object, intersection)
 
         if isinstance(object, Room):
             for opening in self.openings:
-                opening.check_adjacencies(object, object_edge_index)
+                opening.check_adjacencies(object)
 
 
 
@@ -352,7 +344,7 @@ class WallOpening(PlanObject):
     def __init__(self, wall, container, index):
         super().__init__(container, index)
         self.wall = wall
-        self.rooms = [None, None]
+        self.rooms = []
 
         # The open sides of the wall opening polygon always have indicies 0 and 2.
         # They also match up with wall indices 0 and 2.
@@ -360,25 +352,22 @@ class WallOpening(PlanObject):
     def __repr__(self):
         return "{} in {}".format(super().__repr__(), self.wall)
 
-    def check_adjacencies(self, room, room_edge_index):
-        room_edge = room.edges[room_edge_index]
-        for self_edge_index in [0, 2]:
-            self_edge = self.edges[self_edge_index]
-            if self_edge.is_close(room_edge, CLOSE_EDGE_TOLERANCE):
-                self.add_adjacency(room, self_edge_index // 2)
+    def check_adjacencies(self, room):
+        if self.polygon.distance(room.polygon) < CLOSE_EDGE_TOLERANCE:
+            self.add_adjacency(room)
 
 
 class Door(WallOpening):
 
-    def add_adjacency(self, room, edge_index):
-        self.rooms[edge_index] = room
+    def add_adjacency(self, room):
+        self.rooms.append(room)
         room.doors.add(self)
 
 
 class Window(WallOpening):
 
-    def add_adjacency(self, room, edge_index):
-        self.rooms[edge_index] = room
+    def add_adjacency(self, room):
+        self.rooms.append(room)
         room.windows.add(self)
 
 
@@ -386,7 +375,7 @@ class Fixture(PlanObject):
 
     def __init__(self, container, index):
         super().__init__(container, index)
-        self.rooms = {}
+        self.rooms = set()
 
     def __repr__(self):
         return "Fixture {} ({})".format(self.index, self.type)
@@ -420,25 +409,14 @@ class Fixture(PlanObject):
     def simple_type(self):
         return simplify_fixture_type(self.types)
 
-    def add_room(self, room, vertex):
-        if room not in self.rooms:
-            self.rooms[room] = []
-        self.rooms[room].append(vertex)
+    def add_room(self, room, vertex=0):
+        self.rooms.add(room)
         room.fixtures.add(self)
 
     def find_rooms(self, rooms):
-        for vertex in self.polygon.vertices:
-            self._find_room(rooms, vertex)
-
-    def _find_room(self, rooms, vertex):
-        for room in self.rooms:
-            if room.polygon.contains_point(vertex):
-                self.add_room(room, vertex)
-                return
-
         for room in rooms:
-            if room not in self.rooms and room.polygon.contains_point(vertex):
-                self.add_room(room, vertex)
+            if self.polygon.relate_pattern(room.polygon, "2********"):
+                self.add_room(room)
                 break
 
 
@@ -533,28 +511,19 @@ class Floor:
         area = 0
 
         for room in self.rooms:
-            area += room.polygon.area()
+            area += room.polygon.area
 
         for wall in self.walls:
-            area += wall.polygon.area()
+            area += wall.polygon.area
 
         return area
 
 
     def find_adjacencies(self):
-
-        # Find adjacent edges
         for room_index, room in enumerate(self.rooms):
             room.find_adjacencies(self.walls)
             room.find_adjacencies(self.railings)
             room.find_adjacencies(self.rooms[room_index+1:])
-
-        # Check for missing adjacencies
-        for room_index, room in enumerate(self.rooms):
-            if len(room.edges_without_adjacencies) > 0:
-                room.find_close(self.walls, CLOSE_EDGE_TOLERANCE)
-                room.find_close(self.railings, CLOSE_EDGE_TOLERANCE)
-                room.find_close(self.rooms[room_index+1:], CLOSE_EDGE_TOLERANCE)
 
     def find_inside(self):
         for fixture in self.fixtures:

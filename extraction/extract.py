@@ -1,6 +1,7 @@
 import argparse
 from collections import Counter
 import csv
+import math
 import sys
 from time import perf_counter
 from cubicasa import Cubicasa, ROOM_TYPES, FIXTURE_TYPES
@@ -49,6 +50,10 @@ def get_headers():
 
     return headers
 
+def isoperimetric_quotient(polygon):
+    """Returns the isoperimetric quotient of the polygon, a measure of its compactness."""
+    return 4 * math.pi * polygon.area / polygon.length ** 2
+
 def summarize_counter(c):
     return ", ".join([label if count == 1 else "{} ({}x)".format(label, count) for label, count in c.items()])
 
@@ -77,7 +82,7 @@ def process(model):
                 for fixture in room.fixtures:
                     fixture_types[fixture.simple_type] += 1
 
-                room_area = room.polygon.area()
+                room_area = room.polygon.area
                 proportion_floor_area = room_area / floor_area if floor_area > 0 else 0
 
                 num_walls = len(room.adjacent_walls())
@@ -99,8 +104,8 @@ def process(model):
                     "num_sides": room.num_edges(),
                     "area": room_area,
                     "proportion_floor_area": proportion_floor_area,
-                    "perimeter": room.polygon.perimeter(),
-                    "compactness": room.polygon.isoperimetric_quotient(),
+                    "perimeter": room.polygon.length,
+                    "compactness": isoperimetric_quotient(room.polygon),
                     "num_adjacent_walls": num_walls,
                     "proportion_exterior_walls": proportion_exterior_walls,
                     "num_adjacent_railings": num_railings,
