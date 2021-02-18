@@ -140,34 +140,7 @@ class PlanObject:
 
     @cached_property
     def polygon(self):
-        e = self.polygon_element
-
-        if isinstance(e, svgelements.Rect):
-            svg_points = [
-                Point(e.x, e.y),
-                Point(e.x + e.width, e.y),
-                Point(e.x + e.width, e.y + e.height),
-                Point(e.x, e.y + e.height)
-            ]
-
-        elif isinstance(e, svgelements.Circle):
-            svg_points = [Point(e.cx, e.cy)]
-
-        elif isinstance(self.polygon_element, svgelements.Path):
-            svg_points = [Point(p.x, p.y) for p in e.as_points()]
-
-        else:
-            svg_points = [Point(p.x, p.y) for p in e.points]
-
-        # Make sure we don't have any duplicate points
-        unique_points = []
-        previous_point = svg_points[-1]
-        for point in svg_points:
-            if point != previous_point:
-                unique_points.append(point)
-                previous_point = point
-
-        return Polygon(unique_points)
+        return Polygon([Point(p.x, p.y) for p in self.polygon_element.points])
 
     def num_edges(self):
         return len(self.polygon.exterior.coords) - 1
@@ -395,6 +368,30 @@ class Fixture(PlanObject):
         print(self.container.bbox())
         print(self.container[0].bbox())
         raise Exception("Boundary polygon not found")
+
+    @cached_property
+    def polygon(self):
+        try:
+            return super().polygon
+
+        except Exception as err:
+            e = self.polygon_element
+
+            if isinstance(e, svgelements.Rect):
+                return Polygon([
+                    Point(e.x, e.y),
+                    Point(e.x + e.width, e.y),
+                    Point(e.x + e.width, e.y + e.height),
+                    Point(e.x, e.y + e.height)
+                ])
+
+            if isinstance(e, svgelements.Circle):
+                return Point(e.cx, e.cy).buffer(min(e.rx, e.ry))
+
+            if isinstance(self.polygon_element, svgelements.Path):
+                return Polygon([Point(p.x, p.y) for p in e.as_points()])
+
+            raise Exception("Can't create polygon from", e)
 
     @cached_property
     def types(self):
