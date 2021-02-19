@@ -723,6 +723,17 @@ class Cubicasa:
             for c in child_folders:
                 yield (p, c)
 
-    def models(self):
+    def models(self, limit=None, offset=0):
+        limit_count = 0
+        offset_count = 0
+
         for path in self.paths():
-            yield self.get_model(*path)
+            if offset > offset_count:
+                offset_count += 1
+
+            elif limit is None or limit > limit_count:
+                yield self.get_model(*path)
+                limit_count += 1
+
+            else:
+                break

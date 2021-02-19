@@ -7,15 +7,6 @@ from time import perf_counter
 from cubicasa import Cubicasa, ROOM_TYPES, FIXTURE_TYPES
 
 
-def limit(gen, max):
-    count = 0
-    for item in gen:
-        if count < max:
-            yield item
-            count += 1
-        else:
-            break
-
 def get_headers():
     headers = [
         "path",
@@ -140,6 +131,7 @@ def process(model):
 parser = argparse.ArgumentParser()
 parser.add_argument("basepath", metavar="CUBICASA_PATH", help="The path to the cubicasa5k folder")
 parser.add_argument("-l", "--limit", type=int, help="The maximum number of plans to process")
+parser.add_argument("-o", "--offset", type=int, help="The number of plans to skip before processing", default=0)
 parser.add_argument("-p", "--plan", help="The relative path to a specific plan to process")
 args = parser.parse_args()
 
@@ -154,11 +146,7 @@ if args.plan is not None:
         w.writerow(data)
 
 else:
-    iterator = c.models()
-    if args.limit is not None:
-        iterator = limit(iterator, args.limit)
-
-    for m in iterator:
+    for m in c.models(args.limit, args.offset):
         for data in process(m):
             w.writerow(data)
 
