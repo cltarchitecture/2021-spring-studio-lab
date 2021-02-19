@@ -6,7 +6,8 @@ import math
 import os.path
 import re
 
-from shapely.geometry import LineString, MultiLineString, Point, Polygon
+from shapely.geometry import LineString, MultiLineString, MultiPolygon, Point, Polygon
+from shapely.ops import polygonize, split
 import svgelements
 
 
@@ -124,6 +125,83 @@ def lines_are_close(line1, line2, tolerance):
 
     return False
 
+def polygon_edges(polygon):
+    a = polygon.exterior.coords[:-1]
+    b = polygon.exterior.coords[1:]
+    return [LineString(points) for points in zip(a, b)]
+
+def largest_polygon(polygons):
+    largest = polygons[0]
+    for p in polygons[1:]:
+        if p.area > largest.area:
+            largest = p
+    return largest
+
+def extend_or_append(list, iterable_or_not):
+    try:
+        list.extend(iterable_or_not)
+    except:
+        list.append(iterable_or_not)
+
+def split_at_intersections(edges):
+    split_edges = []
+
+    for this_edge in edges:
+        other_edges = MultiLineString([e for e in edges if e != this_edge])
+
+        try:
+            result = split(this_edge, other_edges)
+        except:
+            segments = []
+            extend_or_append(segments, this_edge.intersection(other_edges))
+            extend_or_append(segments, this_edge.difference(other_edges))
+            result = [s for s in segments if isinstance(s, LineString) and not s.is_empty]
+
+        split_edges.extend(result)
+
+    return split_edges
+
+def remove_duplicates(geometry_list):
+    deduplicated = []
+
+    for this in geometry_list:
+        has_duplicate = False
+        for that in deduplicated:
+            if this.equals(that):
+                has_duplicate = True
+                break
+
+        if not has_duplicate:
+            deduplicated.append(this)
+
+    return deduplicated
+
+def polygon_from_points(points):
+    num_points = len(points)
+
+    if num_points == 0:
+        return Point()
+
+    if num_points == 1:
+        return Point(points[0])
+
+    if num_points == 2:
+        return LineString(points)
+
+    polygon = Polygon(points)
+    if polygon.is_valid:
+        return polygon
+
+    raw_edges = polygon_edges(polygon)
+    split_edges = split_at_intersections(raw_edges)
+    deduplicated_edges = remove_duplicates(split_edges)
+    polygons = list(polygonize(deduplicated_edges))
+
+    if len(polygons) > 0:
+        return largest_polygon(polygons)
+
+    return Polygon()
+
 
 
 
@@ -143,15 +221,14 @@ class PlanObject:
 
     @cached_property
     def polygon(self):
-        return Polygon([Point(p.x, p.y) for p in self.polygon_element.points])
+        points = [Point(p.x, p.y) for p in self.polygon_element.points]
+        return polygon_from_points(points)
 
     def num_edges(self):
         return len(self.polygon.exterior.coords) - 1
 
     def edges(self):
-        a = self.polygon.exterior.coords[:-1]
-        b = self.polygon.exterior.coords[1:]
-        return [LineString(points) for points in zip(a, b)]
+        return polygon_edges(self.polygon)
 
     def add_adjacency(self, object, intersection):
         self.adjacencies.add(object, intersection)
@@ -345,7 +422,7 @@ def subtract_cleanly(this_polygon, that_polygon, tolerance):
     if isinstance(difference, Polygon):
         return difference
 
-    if len(difference) == 2:
+    if isinstance(difference, MultiPolygon) and len(difference) == 2:
         sizes = [minimum_rotated_rectangle_dimension(p) for p in difference]
         min_size = min(sizes)
         if min_size < tolerance:
@@ -400,7 +477,7 @@ class Fixture(PlanObject):
         self.rooms = set()
 
     def __repr__(self):
-        return "Fixture {} ({})".format(self.index, self.type)
+        return "Fixture {} ({})".format(self.index, self.full_type)
 
     @property
     def polygon_element(self):
@@ -438,7 +515,15 @@ class Fixture(PlanObject):
                 return Point(e.cx, e.cy).buffer(min(e.rx, e.ry))
 
             if isinstance(self.polygon_element, svgelements.Path):
-                return Polygon([Point(p.x, p.y) for p in e.as_points()])
+                path_points = list(e.as_points())
+                if len(path_points) >= 2 and path_points[0] == path_points[1]:
+                    path_points = path_points[1:]
+
+                if len(path_points) == 1:
+                    return Point(path_points[0])
+
+                # Should return LineString if the path is open and Polygon if the path is closed
+                return LineString(path_points)
 
             raise Exception("Can't create polygon from", e)
 
