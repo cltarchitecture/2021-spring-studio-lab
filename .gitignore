@@ -131,3 +131,4 @@ dmypy.json
 #myfiles
 .vscode\settings.json
 .vscode\extensions.json
+.vscode\
