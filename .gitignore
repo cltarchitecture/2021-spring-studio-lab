@@ -129,6 +129,6 @@ dmypy.json
 .pyre/
 
 #myfiles
-.vscode\settings.json
-.vscode\extensions.json
-.vscode\
+.vscode/
+settings.json
+extensions.json
