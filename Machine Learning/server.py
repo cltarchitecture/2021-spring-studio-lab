@@ -4,7 +4,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return " This is <h3>Plug In homepage </h3>"
+    return " This is Room Tag Predictor <h3>(RTP)</h3> Homepage. "
 
 @app.route("/<name>")
 def user(name):
